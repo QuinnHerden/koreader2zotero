@@ -78,6 +78,36 @@ function ZoteroPlugin:addToMainMenu(menu_items)
                     UIManager:show(InfoMessage:new{ text = msg })
                 end,
             },
+            {
+                text         = _("Clear cache for current book"),
+                enabled_func = function()
+                    return self.ui.document ~= nil
+                end,
+                callback = function()
+                    local s = self:getSettings()
+                    local books = s.books or {}
+                    local file_path = self.ui.document.file
+                    if books[file_path] then
+                        books[file_path] = nil
+                        s.books = books
+                        self:saveSettings(s)
+                        UIManager:show(InfoMessage:new{
+                            text = _("Cache cleared. Next sync will re-create the Zotero item and re-push all highlights.")
+                        })
+                    else
+                        UIManager:show(InfoMessage:new{ text = _("No cache found for this book.") })
+                    end
+                end,
+            },
+            {
+                text     = _("Clear all caches"),
+                callback = function()
+                    local s = self:getSettings()
+                    s.books = {}
+                    self:saveSettings(s)
+                    UIManager:show(InfoMessage:new{ text = _("All caches cleared.") })
+                end,
+            },
             { text = "---", separator = true },
             {
                 text         = _("Auto-sync on close"),
