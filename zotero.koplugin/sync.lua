@@ -203,7 +203,7 @@ function ZoteroSync:testCalibreConnection()
     if err then
         return "Failed to reach Calibre at " .. base .. "\n\nError: " .. err
     end
-    local total = data.total_num or "?"
+    local total = data.num_books_without_search or data.total_num or "?"
     return string.format("Connected to Calibre at %s\n%s book(s) in library.", base, tostring(total))
 end
 
@@ -230,14 +230,14 @@ function ZoteroSync:_fetchCalibreMetadata(title)
         "title:" .. short_title,
     }) do
         search, err = titleSearch(q)
-        if not err and search.ids and #search.ids > 0 then break end
+        if not err and search and search.book_ids and #search.book_ids > 0 then break end
     end
-    if not search or not search.ids or #search.ids == 0 then
+    if not search or not search.book_ids or #search.book_ids == 0 then
         return nil, string.format("no results (tried short title %q, full title %q)", short_title, title)
     end
 
     -- Fetch metadata for the first result
-    local book_id = tostring(search.ids[1])
+    local book_id = tostring(search.book_ids[1])
     local books, books_err = self:_calibreGet(base .. "/ajax/books" .. lib .. "/" .. book_id)
     if books_err then return nil, "books request failed: " .. books_err end
     if not books[book_id] then
@@ -275,13 +275,13 @@ function ZoteroSync:diagnoseCalibreSearch(title)
         table.insert(tried, q)
         search, err = self:_calibreGet(
             base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(q) .. "&num=5")
-        if not err and search and search.ids and #search.ids > 0 then break end
+        if not err and search and search.book_ids and #search.book_ids > 0 then break end
     end
-    if not search or not search.ids or #search.ids == 0 then
+    if not search or not search.book_ids or #search.book_ids == 0 then
         return "No results found.\nTried:\n" .. table.concat(tried, "\n")
     end
 
-    local book_id = tostring(search.ids[1])
+    local book_id = tostring(search.book_ids[1])
     local books, books_err = self:_calibreGet(base .. "/ajax/books" .. lib .. "/" .. book_id)
     if books_err then return "Books fetch failed: " .. books_err end
     if not books[book_id] then return "Book " .. book_id .. " missing from response" end
