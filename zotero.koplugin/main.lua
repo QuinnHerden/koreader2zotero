@@ -303,7 +303,7 @@ function ZoteroPlugin:showCalibreURLDialog(s)
     local dlg
     dlg = InputDialog:new{
         title       = _("Calibre Server URL (optional)"),
-        description = _("e.g. http://192.168.1.100:8080 — fetches ISBN and publisher when creating Zotero items. Leave blank to skip."),
+        description = _("e.g. https://192.168.1.100:8080 — fetches ISBN and publisher when creating Zotero items. Leave blank to skip."),
         input       = s.calibre_url or "",
         input_type  = "string",
         buttons     = {{
@@ -318,11 +318,41 @@ function ZoteroPlugin:showCalibreURLDialog(s)
                 end,
             },
             {
+                text             = _("Next"),
+                is_enter_default = true,
+                callback         = function()
+                    local url = dlg:getInputText():gsub("/+$", ""):gsub("/opds$", "")
+                    s.calibre_url = (url ~= "") and url or nil
+                    UIManager:close(dlg)
+                    self:showCalibreLibraryDialog(s)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dlg)
+end
+
+function ZoteroPlugin:showCalibreLibraryDialog(s)
+    local dlg
+    dlg = InputDialog:new{
+        title       = _("Calibre Library ID (optional)"),
+        description = _("The folder name of your Calibre library (e.g. 'library'). Leave blank if using the default 'Calibre Library'."),
+        input       = s.calibre_library_id or "",
+        input_type  = "string",
+        buttons     = {{
+            {
+                text     = _("Back"),
+                callback = function()
+                    UIManager:close(dlg)
+                    self:showCalibreURLDialog(s)
+                end,
+            },
+            {
                 text             = _("Save"),
                 is_enter_default = true,
                 callback         = function()
-                    local url = dlg:getInputText():gsub("/+$", "")
-                    s.calibre_url = (url ~= "") and url or nil
+                    local lib = dlg:getInputText():match("^%s*(.-)%s*$")
+                    s.calibre_library_id = (lib ~= "") and lib or nil
                     UIManager:close(dlg)
                     self:saveSettings(s)
                     UIManager:show(InfoMessage:new{

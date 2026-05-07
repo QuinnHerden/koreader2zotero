@@ -169,11 +169,15 @@ function ZoteroSync:_calibreGet(url)
 end
 
 -- Normalise the saved URL: strip trailing slash and /opds suffix.
+-- Returns base_url, library_suffix (e.g. "&library_id=library" or "").
 function ZoteroSync:_calibreBaseURL()
     local settings = self.getSettings()
     local url = settings.calibre_url
     if not url or url == "" then return nil end
-    return url:gsub("/+$", ""):gsub("/opds$", "")
+    local base = url:gsub("/+$", ""):gsub("/opds$", "")
+    local lib_id = settings.calibre_library_id
+    local lib_suffix = (lib_id and lib_id ~= "") and ("&library_id=" .. lib_id) or ""
+    return base, lib_suffix
 end
 
 -- Probe the Zotero API and return a human-readable status string.
@@ -191,10 +195,10 @@ end
 
 -- Probe the Calibre server and return a human-readable status string.
 function ZoteroSync:testCalibreConnection()
-    local base = self:_calibreBaseURL()
+    local base, lib = self:_calibreBaseURL()
     if not base then return "No Calibre URL configured." end
 
-    local data, err = self:_calibreGet(base .. "/ajax/search?query=&num=1")
+    local data, err = self:_calibreGet(base .. "/ajax/search?query=*&num=1" .. lib)
     if err then
         return "Failed to reach Calibre at " .. base .. "\n\nError: " .. err
     end
@@ -205,21 +209,30 @@ end
 -- Query the Calibre content server for richer book metadata.
 -- Returns (meta_table, err_string). On success err is nil; on failure meta is nil.
 function ZoteroSync:_fetchCalibreMetadata(title)
-    local base = self:_calibreBaseURL()
+    local base, lib = self:_calibreBaseURL()
     if not base then return nil, "no Calibre URL" end
 
-    -- Search by title
-    local query = 'title:"' .. title .. '"'
-    local search, err = self:_calibreGet(
-        base .. "/ajax/search?query=" .. socket.url.escape(query) .. "&num=5")
+    -- Search by title — try quoted exact match first, fall back to unquoted
+    local function titleSearch(q)
+        return self:_calibreGet(
+            base .. "/ajax/search?query=" .. socket.url.escape(q) .. "&num=5" .. lib)
+    end
+    local search, err = titleSearch('title:"' .. title .. '"')
     if err then return nil, "search request failed: " .. err end
+    if not search.ids or #search.ids == 0 then
+        -- Quoted search returned nothing; try unquoted word match
+        search, err = titleSearch("title:" .. title)
+        if err then return nil, "fallback search failed: " .. err end
+    end
     if not search.ids or #search.ids == 0 then
         return nil, "no results for title: " .. title
     end
 
     -- Fetch metadata for the first result
     local book_id = tostring(search.ids[1])
-    local books, books_err = self:_calibreGet(base .. "/ajax/books/" .. book_id)
+    local books_url = base .. "/ajax/books/" .. book_id
+    if lib ~= "" then books_url = books_url .. "?" .. lib:sub(2) end
+    local books, books_err = self:_calibreGet(books_url)
     if books_err then return nil, "books request failed: " .. books_err end
     if not books[book_id] then
         return nil, "book id " .. book_id .. " missing from response"
