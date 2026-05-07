@@ -169,16 +169,29 @@ function ZoteroSync:_calibreGet(url)
 end
 
 -- Normalise the saved URL: strip trailing slash and /opds suffix.
--- Returns base_url, lib_path (e.g. "/library" or "").
--- Non-default libraries are path segments: /ajax/search/library?...
+-- Returns base_url, lib_id (raw string or "").
+-- Callers build URLs as needed:
+--   search: base .. "/ajax/search/" .. lib_id .. "?..."  (lib_id in path)
+--   books:  base .. "/ajax/books/" .. id .. "?library_id=" .. lib_id  (lib_id as query param)
 function ZoteroSync:_calibreBaseURL()
     local settings = self.getSettings()
     local url = settings.calibre_url
     if not url or url == "" then return nil end
     local base = url:gsub("/+$", ""):gsub("/opds$", "")
-    local lib_id = settings.calibre_library_id
-    local lib_path = (lib_id and lib_id ~= "") and ("/" .. lib_id) or ""
-    return base, lib_path
+    local lib_id = settings.calibre_library_id or ""
+    return base, lib_id
+end
+
+local function calibreSearchURL(base, lib_id, query, num)
+    local path = lib_id ~= "" and ("/ajax/search/" .. lib_id) or "/ajax/search"
+    return base .. path .. "?query=" .. socket.url.escape(query) .. "&num=" .. tostring(num)
+end
+
+local function calibreBooksURL(base, lib_id, book_id)
+    if lib_id ~= "" then
+        return base .. "/ajax/books/" .. lib_id .. "?ids=" .. tostring(book_id)
+    end
+    return base .. "/ajax/books/" .. tostring(book_id)
 end
 
 -- Probe the Zotero API and return a human-readable status string.
@@ -199,7 +212,7 @@ function ZoteroSync:testCalibreConnection()
     local base, lib = self:_calibreBaseURL()
     if not base then return "No Calibre URL configured." end
 
-    local data, err = self:_calibreGet(base .. "/ajax/search" .. lib .. "?query=*&num=1")
+    local data, err = self:_calibreGet(calibreSearchURL(base, lib, "*", 1))
     if err then
         return "Failed to reach Calibre at " .. base .. "\n\nError: " .. err
     end
@@ -217,19 +230,13 @@ function ZoteroSync:_fetchCalibreMetadata(title)
     -- query, since Calibre uses colon as field separator and it breaks parsing.
     local short_title = title:match("^(.-)%s*[:%—–]") or title
 
-    local function titleSearch(q)
-        return self:_calibreGet(
-            base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(q) .. "&num=5")
-    end
-
-    -- Try: quoted short title, then quoted full title, then bare short title
     local search, err
     for _, q in ipairs({
         'title:"' .. short_title .. '"',
         'title:"' .. title .. '"',
         "title:" .. short_title,
     }) do
-        search, err = titleSearch(q)
+        search, err = self:_calibreGet(calibreSearchURL(base, lib, q, 5))
         if not err and search and search.book_ids and #search.book_ids > 0 then break end
     end
     if not search or not search.book_ids or #search.book_ids == 0 then
@@ -238,7 +245,7 @@ function ZoteroSync:_fetchCalibreMetadata(title)
 
     -- Fetch metadata for the first result
     local book_id = tostring(search.book_ids[1])
-    local books, books_err = self:_calibreGet(base .. "/ajax/books" .. lib .. "/" .. book_id)
+    local books, books_err = self:_calibreGet(calibreBooksURL(base, lib, book_id))
     if books_err then return nil, "books request failed: " .. books_err end
     if not books[book_id] then
         return nil, "book id " .. book_id .. " missing from response"
@@ -273,8 +280,7 @@ function ZoteroSync:diagnoseCalibreSearch(title)
         "title:" .. short_title,
     }) do
         table.insert(tried, q)
-        search, err = self:_calibreGet(
-            base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(q) .. "&num=5")
+        search, err = self:_calibreGet(calibreSearchURL(base, lib, q, 5))
         if not err and search and search.book_ids and #search.book_ids > 0 then break end
     end
     if not search or not search.book_ids or #search.book_ids == 0 then
@@ -282,7 +288,7 @@ function ZoteroSync:diagnoseCalibreSearch(title)
     end
 
     local book_id = tostring(search.book_ids[1])
-    local books, books_err = self:_calibreGet(base .. "/ajax/books" .. lib .. "/" .. book_id)
+    local books, books_err = self:_calibreGet(calibreBooksURL(base, lib, book_id))
     if books_err then return "Books fetch failed: " .. books_err end
     if not books[book_id] then return "Book " .. book_id .. " missing from response" end
 
