@@ -176,6 +176,19 @@ function ZoteroSync:_calibreBaseURL()
     return url:gsub("/+$", ""):gsub("/opds$", "")
 end
 
+-- Probe the Zotero API and return a human-readable status string.
+function ZoteroSync:testZoteroConnection()
+    local data, headers, err = self.api:_request("GET", "/items?limit=1")
+    if err then
+        return "Failed to connect to Zotero.\n\nError: " .. err
+    end
+    local total   = headers and headers["total-results"]        or "?"
+    local version = headers and headers["last-modified-version"] or "?"
+    return string.format(
+        "Connected to Zotero.\nLibrary version: %s\nTotal items: %s",
+        tostring(version), tostring(total))
+end
+
 -- Probe the Calibre server and return a human-readable status string.
 function ZoteroSync:testCalibreConnection()
     local base = self:_calibreBaseURL()
