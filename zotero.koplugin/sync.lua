@@ -18,6 +18,11 @@ Settings structure (stored under G_reader_settings key "zotero"):
 --]]
 
 local DocSettings = require("docsettings")
+local ltn12 = require("ltn12")
+local rapidjson = require("rapidjson")
+local socket = require("socket")
+local socketutil = require("socketutil")
+local http = require("socket.http")
 local logger = require("logger")
 
 local ZoteroSync = {}
@@ -141,6 +146,54 @@ function ZoteroSync:getBookData(file_path)
     }
 end
 
+-- Query the Calibre content server for richer book metadata.
+-- Returns a table with isbn, publisher, date, authors, or nil if unavailable.
+function ZoteroSync:_fetchCalibreMetadata(title)
+    local settings = self.getSettings()
+    local base_url = settings.calibre_url
+    if not base_url or base_url == "" then return nil end
+    base_url = base_url:gsub("/+$", "")
+
+    local function calibreGet(url)
+        local sink = {}
+        socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
+        local ok, code = http.request{ url = url, sink = ltn12.sink.table(sink) }
+        socketutil:reset_timeout()
+        if not ok or code ~= 200 then
+            return nil, string.format("HTTP %s", tostring(code))
+        end
+        local data, err = rapidjson.decode(table.concat(sink))
+        return data, err
+    end
+
+    -- Search by title
+    local query = 'title:"' .. title .. '"'
+    local search, err = calibreGet(
+        base_url .. "/ajax/search?query=" .. socket.url.escape(query) .. "&num=5")
+    if not search or not search.ids or #search.ids == 0 then
+        logger.info("ZoteroSync: Calibre found no results for:", title, err)
+        return nil
+    end
+
+    -- Fetch metadata for the first result
+    local book_id = tostring(search.ids[1])
+    local books, books_err = calibreGet(base_url .. "/ajax/books/" .. book_id)
+    if not books or not books[book_id] then
+        logger.warn("ZoteroSync: Calibre book fetch failed:", books_err)
+        return nil
+    end
+
+    local m = books[book_id]
+    local ids = type(m.identifiers) == "table" and m.identifiers or {}
+    return {
+        authors     = m.authors,   -- array of strings
+        isbn        = ids.isbn or ids.ISBN,
+        publisher   = m.publisher,
+        date        = m.pubdate and m.pubdate:match("(%d%d%d%d)"),
+        identifiers = ids,
+    }
+end
+
 -- Search Zotero for a book item matching title. Returns key or nil.
 function ZoteroSync:_findZoteroItem(title)
     local results, _, err = self.api:searchItems(title, "book")
@@ -184,9 +237,9 @@ function ZoteroSync:_createZoteroItem(book_data)
     if #creators > 0 then
         item.creators = creators
     end
-    if book_data.isbn then
-        item.ISBN = book_data.isbn
-    end
+    if book_data.isbn      then item.ISBN      = book_data.isbn      end
+    if book_data.publisher then item.publisher = book_data.publisher end
+    if book_data.date      then item.date      = book_data.date      end
 
     local resp, _, err = self.api:createItems({item})
     if err then return nil, err end
@@ -215,6 +268,18 @@ function ZoteroSync:syncBook(book_data)
         if found then
             zotero_key = found
         else
+            -- Enrich metadata from Calibre before creating the item
+            local cal = self:_fetchCalibreMetadata(book_data.title)
+            if cal then
+                if cal.isbn      then book_data.isbn      = cal.isbn      end
+                if cal.publisher then book_data.publisher = cal.publisher end
+                if cal.date      then book_data.date      = cal.date      end
+                -- Use Calibre's author list if we only have a fallback
+                if book_data.author == "Unknown Author"
+                        and cal.authors and #cal.authors > 0 then
+                    book_data.author = table.concat(cal.authors, "\n")
+                end
+            end
             local new_key, create_err = self:_createZoteroItem(book_data)
             if create_err then return false, "Could not create Zotero item: " .. create_err end
             zotero_key = new_key

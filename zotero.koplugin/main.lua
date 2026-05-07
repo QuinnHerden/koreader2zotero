@@ -231,11 +231,44 @@ function ZoteroPlugin:showUserIDDialog(s)
                     UIManager:close(dlg)
                     if s.api_key ~= "" and s.user_id ~= "" then
                         if s.auto_sync == nil then s.auto_sync = true end
-                        self:saveSettings(s)
-                        UIManager:show(InfoMessage:new{
-                            text = _("Zotero configured. Auto-sync on document close is on.")
-                        })
+                        self:showCalibreURLDialog(s)
                     end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dlg)
+end
+
+function ZoteroPlugin:showCalibreURLDialog(s)
+    local dlg
+    dlg = InputDialog:new{
+        title       = _("Calibre Server URL (optional)"),
+        description = _("e.g. http://192.168.1.100:8080 — fetches ISBN and publisher when creating Zotero items. Leave blank to skip."),
+        input       = s.calibre_url or "",
+        input_type  = "string",
+        buttons     = {{
+            {
+                text     = _("Skip"),
+                callback = function()
+                    UIManager:close(dlg)
+                    self:saveSettings(s)
+                    UIManager:show(InfoMessage:new{
+                        text = _("Zotero configured. Auto-sync on document close is on.")
+                    })
+                end,
+            },
+            {
+                text             = _("Save"),
+                is_enter_default = true,
+                callback         = function()
+                    local url = dlg:getInputText():gsub("/+$", "")
+                    s.calibre_url = (url ~= "") and url or nil
+                    UIManager:close(dlg)
+                    self:saveSettings(s)
+                    UIManager:show(InfoMessage:new{
+                        text = _("Zotero configured. Auto-sync on document close is on.")
+                    })
                 end,
             },
         }},
