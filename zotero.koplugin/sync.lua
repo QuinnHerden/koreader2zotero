@@ -239,13 +239,51 @@ function ZoteroSync:_fetchCalibreMetadata(title)
 
     local m = books[book_id]
     local ids = type(m.identifiers) == "table" and m.identifiers or {}
+    local isbn = ids.isbn or ids.ISBN or ids.isbn13 or ids.isbn10
     return {
         authors     = m.authors,
-        isbn        = ids.isbn or ids.ISBN,
+        isbn        = isbn,
         publisher   = m.publisher,
         date        = m.pubdate and m.pubdate:match("(%d%d%d%d)"),
         identifiers = ids,
+        -- keep raw fields for diagnostics
+        _raw_title  = m.title,
+        _raw_ids    = ids,
     }, nil
+end
+
+-- Search Calibre for a title and return a diagnostic string showing what was found.
+function ZoteroSync:diagnoseCalibreSearch(title)
+    local base, lib = self:_calibreBaseURL()
+    if not base then return "No Calibre URL configured." end
+
+    local query = 'title:"' .. title .. '"'
+    local search, err = self:_calibreGet(
+        base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(query) .. "&num=5")
+    if err then return "Search failed: " .. err end
+    if not search.ids or #search.ids == 0 then
+        return "No results found for: " .. title
+    end
+
+    local book_id = tostring(search.ids[1])
+    local books, books_err = self:_calibreGet(base .. "/ajax/books" .. lib .. "/" .. book_id)
+    if books_err then return "Books fetch failed: " .. books_err end
+    if not books[book_id] then return "Book " .. book_id .. " missing from response" end
+
+    local m = books[book_id]
+    local ids = type(m.identifiers) == "table" and m.identifiers or {}
+
+    local id_parts = {}
+    for k, v in pairs(ids) do
+        table.insert(id_parts, k .. "=" .. tostring(v))
+    end
+
+    return string.format(
+        "Found: %s\nIdentifiers: %s\nPublisher: %s\nDate: %s",
+        tostring(m.title),
+        #id_parts > 0 and table.concat(id_parts, ", ") or "(none)",
+        tostring(m.publisher or ""),
+        tostring(m.pubdate or ""))
 end
 
 -- Search Zotero for a book item matching title. Returns key or nil.

@@ -137,6 +137,19 @@ function ZoteroPlugin:addToMainMenu(menu_items)
                 end,
             },
             {
+                text         = _("Test Calibre book search"),
+                enabled_func = function() return self.ui.document ~= nil end,
+                callback     = function()
+                    local props = self.ui.doc_props or {}
+                    local title = (props.title ~= nil and props.title ~= "")
+                        and props.title
+                        or (self.ui.document.file:match("([^/]+)$") or ""):gsub("%.[^.]+$", "")
+                    local sync = self:_makeSync()
+                    local msg = sync:diagnoseCalibreSearch(title)
+                    UIManager:show(InfoMessage:new{ text = "Title: " .. title .. "\n\n" .. msg })
+                end,
+            },
+            {
                 text     = _("Settings"),
                 callback = function() self:showAPIKeyDialog() end,
             },
