@@ -176,14 +176,14 @@ function ZoteroSync:_createZoteroItem(book_data)
     end
 
     local item = {
-        itemType   = "book",
-        title      = book_data.title,
-        creators   = creators,
-        extra      = "Added by koreader2zotero",
-        tags       = {},
-        collections = {},
-        relations  = {},
+        itemType = "book",
+        title    = book_data.title,
+        extra    = "Added by koreader2zotero",
     }
+    -- Only include creators if non-empty; rapidjson encodes {} as object not array
+    if #creators > 0 then
+        item.creators = creators
+    end
     if book_data.isbn then
         item.ISBN = book_data.isbn
     end

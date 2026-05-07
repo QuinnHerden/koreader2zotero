@@ -114,10 +114,9 @@ end
 function ZoteroAPI:createNote(parent_key, html_content)
     local items = {
         {
-            itemType = "note",
+            itemType   = "note",
             parentItem = parent_key,
-            note = html_content,
-            tags = {},
+            note       = html_content,
         }
     }
     return self:_request("POST", "/items", items)
