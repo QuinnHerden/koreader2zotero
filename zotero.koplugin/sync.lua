@@ -22,7 +22,8 @@ local ltn12 = require("ltn12")
 local rapidjson = require("rapidjson")
 local socket = require("socket")
 local socketutil = require("socketutil")
-local http = require("socket.http")
+local http  = require("socket.http")
+local https = require("ssl.https")
 local logger = require("logger")
 
 local ZoteroSync = {}
@@ -152,12 +153,14 @@ function ZoteroSync:_fetchCalibreMetadata(title)
     local settings = self.getSettings()
     local base_url = settings.calibre_url
     if not base_url or base_url == "" then return nil end
-    base_url = base_url:gsub("/+$", "")
+    -- Strip /opds suffix if user pasted the OPDS URL by mistake
+    base_url = base_url:gsub("/+$", ""):gsub("/opds$", "")
 
     local function calibreGet(url)
         local sink = {}
+        local requester = url:sub(1, 5) == "https" and https or http
         socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
-        local ok, code = http.request{ url = url, sink = ltn12.sink.table(sink) }
+        local ok, code = requester.request{ url = url, sink = ltn12.sink.table(sink) }
         socketutil:reset_timeout()
         if not ok or code ~= 200 then
             return nil, string.format("HTTP %s", tostring(code))
@@ -376,7 +379,7 @@ function ZoteroSync:backfillMetadata()
     end
 
     local books = settings.books or {}
-    local n_updated, n_skipped = 0, 0
+    local n_updated, n_has_isbn, n_no_match = 0, 0, 0
     local errors = {}
 
     for _, info in pairs(books) do
@@ -393,13 +396,14 @@ function ZoteroSync:backfillMetadata()
 
         -- Skip if ISBN is already present
         if data.ISBN and data.ISBN ~= "" then
-            n_skipped = n_skipped + 1
+            n_has_isbn = n_has_isbn + 1
             goto continue
         end
 
         local cal = self:_fetchCalibreMetadata(data.title or "")
         if not cal then
-            n_skipped = n_skipped + 1
+            n_no_match = n_no_match + 1
+            table.insert(errors, (data.title or zotero_key) .. ": no Calibre match")
             goto continue
         end
 
@@ -409,7 +413,8 @@ function ZoteroSync:backfillMetadata()
         if cal.date      then patch.date      = cal.date      end
 
         if not cal.isbn and not cal.publisher and not cal.date then
-            n_skipped = n_skipped + 1
+            n_no_match = n_no_match + 1
+            table.insert(errors, (data.title or zotero_key) .. ": Calibre returned no metadata")
             goto continue
         end
 
@@ -423,11 +428,10 @@ function ZoteroSync:backfillMetadata()
         ::continue::
     end
 
-    local msg = string.format("Updated %d item(s), skipped %d (already had ISBN or no Calibre match)",
-        n_updated, n_skipped)
+    local msg = string.format("Updated %d, skipped %d (already had ISBN), no Calibre match: %d",
+        n_updated, n_has_isbn, n_no_match)
     if #errors > 0 then
-        msg = msg .. string.format("\n%d error(s): %s",
-            #errors, table.concat(errors, "; "):sub(1, 300))
+        msg = msg .. "\n" .. table.concat(errors, "\n"):sub(1, 400)
     end
     return true, msg
 end
