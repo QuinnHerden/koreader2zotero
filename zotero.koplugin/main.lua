@@ -65,6 +65,19 @@ function ZoteroPlugin:addToMainMenu(menu_items)
                 enabled_func = function() return self:isConfigured() end,
                 callback     = function() self:syncAllBooks() end,
             },
+            {
+                text         = _("Backfill metadata from Calibre"),
+                enabled_func = function()
+                    local s = self:getSettings()
+                    return self:isConfigured()
+                        and s.calibre_url ~= nil and s.calibre_url ~= ""
+                end,
+                callback = function()
+                    local sync = self:_makeSync()
+                    local _, msg = sync:backfillMetadata()
+                    UIManager:show(InfoMessage:new{ text = msg })
+                end,
+            },
             { text = "---", separator = true },
             {
                 text         = _("Auto-sync on close"),

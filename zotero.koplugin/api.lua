@@ -105,6 +105,12 @@ function ZoteroAPI:getItem(item_key)
     return self:_request("GET", "/items/" .. item_key)
 end
 
+-- Patch an existing item with partial fields. version from data.version on GET.
+function ZoteroAPI:patchItem(item_key, fields, version)
+    return self:_request("PATCH", "/items/" .. item_key, fields,
+        { ["If-Unmodified-Since-Version"] = tostring(version) })
+end
+
 -- Get note children of an item.
 function ZoteroAPI:getChildNotes(item_key)
     return self:_request("GET", "/items/" .. item_key .. "/children?itemType=note")

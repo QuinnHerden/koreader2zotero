@@ -365,4 +365,71 @@ function ZoteroSync:syncBook(book_data)
     return true, string.format("Synced %d highlight(s)", #new_anns)
 end
 
+-- For each previously synced book that is missing ISBN in Zotero, fetch
+-- metadata from Calibre and PATCH the Zotero item. Skips items that already
+-- have an ISBN. Requires calibre_url to be configured.
+-- Returns ok (bool), message (string).
+function ZoteroSync:backfillMetadata()
+    local settings = self.getSettings()
+    if not settings.calibre_url or settings.calibre_url == "" then
+        return false, "No Calibre server URL configured (Tools > Zotero > Settings)"
+    end
+
+    local books = settings.books or {}
+    local n_updated, n_skipped = 0, 0
+    local errors = {}
+
+    for _, info in pairs(books) do
+        local zotero_key = info.zotero_item_key
+        if not zotero_key then goto continue end
+
+        local item, _, err = self.api:getItem(zotero_key)
+        if err or not item or not item.data then
+            table.insert(errors, zotero_key .. ": " .. tostring(err))
+            goto continue
+        end
+
+        local data = item.data
+
+        -- Skip if ISBN is already present
+        if data.ISBN and data.ISBN ~= "" then
+            n_skipped = n_skipped + 1
+            goto continue
+        end
+
+        local cal = self:_fetchCalibreMetadata(data.title or "")
+        if not cal then
+            n_skipped = n_skipped + 1
+            goto continue
+        end
+
+        local patch = { itemType = data.itemType }
+        if cal.isbn      then patch.ISBN      = cal.isbn      end
+        if cal.publisher then patch.publisher = cal.publisher end
+        if cal.date      then patch.date      = cal.date      end
+
+        if not cal.isbn and not cal.publisher and not cal.date then
+            n_skipped = n_skipped + 1
+            goto continue
+        end
+
+        local _, _, patch_err = self.api:patchItem(zotero_key, patch, data.version)
+        if patch_err then
+            table.insert(errors, (data.title or zotero_key) .. ": " .. patch_err)
+        else
+            n_updated = n_updated + 1
+        end
+
+        ::continue::
+    end
+
+    local msg = string.format("Updated %d item(s), skipped %d (already had ISBN or no Calibre match)",
+        n_updated, n_skipped)
+    if #errors > 0 then
+        msg = msg .. string.format("\n%d error(s): %s",
+            #errors, table.concat(errors, "; "):sub(1, 300))
+    end
+    return true, msg
+end
+
 return ZoteroSync
