@@ -39,17 +39,6 @@ local function esc(s)
     return s
 end
 
-local function parseTime(str)
-    if not str then return nil end
-    local y, mo, d, h, mi, s = str:match("(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)")
-    if not y then return nil end
-    return os.time({ year=tonumber(y), month=tonumber(mo), day=tonumber(d),
-                     hour=tonumber(h), min=tonumber(mi), sec=tonumber(s) })
-end
-
-local function fmtDate(ts)
-    return os.date("%Y-%m-%d", ts)
-end
 
 -- Render a list of annotation objects into an HTML fragment, grouped by chapter.
 local function renderHTML(annotations)
@@ -74,18 +63,6 @@ local function renderHTML(annotations)
         for _, ann in ipairs(bucket.items) do
             if ann.text and ann.text ~= "" then
                 table.insert(parts, "<blockquote>" .. esc(ann.text) .. "</blockquote>")
-
-                local meta = {}
-                if ann.page then
-                    table.insert(meta, "p. " .. tostring(ann.page))
-                end
-                local t = parseTime(ann.datetime)
-                if t then
-                    table.insert(meta, fmtDate(t))
-                end
-                if #meta > 0 then
-                    table.insert(parts, "<p><small>" .. table.concat(meta, " &mdash; ") .. "</small></p>")
-                end
 
                 if ann.note and ann.note ~= "" then
                     table.insert(parts, "<p><em>" .. esc(ann.note) .. "</em></p>")
