@@ -213,20 +213,27 @@ function ZoteroSync:_fetchCalibreMetadata(title)
     local base, lib = self:_calibreBaseURL()
     if not base then return nil, "no Calibre URL" end
 
-    -- Search by title — try quoted exact match first, fall back to unquoted
+    -- Strip subtitle (everything after first colon or em-dash) for the search
+    -- query, since Calibre uses colon as field separator and it breaks parsing.
+    local short_title = title:match("^(.-)%s*[:%—–]") or title
+
     local function titleSearch(q)
         return self:_calibreGet(
             base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(q) .. "&num=5")
     end
-    local search, err = titleSearch('title:"' .. title .. '"')
-    if err then return nil, "search request failed: " .. err end
-    if not search.ids or #search.ids == 0 then
-        -- Quoted search returned nothing; try unquoted word match
-        search, err = titleSearch("title:" .. title)
-        if err then return nil, "fallback search failed: " .. err end
+
+    -- Try: quoted short title, then quoted full title, then bare short title
+    local search, err
+    for _, q in ipairs({
+        'title:"' .. short_title .. '"',
+        'title:"' .. title .. '"',
+        "title:" .. short_title,
+    }) do
+        search, err = titleSearch(q)
+        if not err and search.ids and #search.ids > 0 then break end
     end
-    if not search.ids or #search.ids == 0 then
-        return nil, "no results for title: " .. title
+    if not search or not search.ids or #search.ids == 0 then
+        return nil, string.format("no results (tried short title %q, full title %q)", short_title, title)
     end
 
     -- Fetch metadata for the first result
@@ -257,12 +264,21 @@ function ZoteroSync:diagnoseCalibreSearch(title)
     local base, lib = self:_calibreBaseURL()
     if not base then return "No Calibre URL configured." end
 
-    local query = 'title:"' .. title .. '"'
-    local search, err = self:_calibreGet(
-        base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(query) .. "&num=5")
-    if err then return "Search failed: " .. err end
-    if not search.ids or #search.ids == 0 then
-        return "No results found for: " .. title
+    local short_title = title:match("^(.-)%s*[:%—–]") or title
+    local search, err
+    local tried = {}
+    for _, q in ipairs({
+        'title:"' .. short_title .. '"',
+        'title:"' .. title .. '"',
+        "title:" .. short_title,
+    }) do
+        table.insert(tried, q)
+        search, err = self:_calibreGet(
+            base .. "/ajax/search" .. lib .. "?query=" .. socket.url.escape(q) .. "&num=5")
+        if not err and search and search.ids and #search.ids > 0 then break end
+    end
+    if not search or not search.ids or #search.ids == 0 then
+        return "No results found.\nTried:\n" .. table.concat(tried, "\n")
     end
 
     local book_id = tostring(search.ids[1])
