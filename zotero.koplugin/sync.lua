@@ -147,54 +147,80 @@ function ZoteroSync:getBookData(file_path)
     }
 end
 
--- Query the Calibre content server for richer book metadata.
--- Returns a table with isbn, publisher, date, authors, or nil if unavailable.
-function ZoteroSync:_fetchCalibreMetadata(title)
-    local settings = self.getSettings()
-    local base_url = settings.calibre_url
-    if not base_url or base_url == "" then return nil end
-    -- Strip /opds suffix if user pasted the OPDS URL by mistake
-    base_url = base_url:gsub("/+$", ""):gsub("/opds$", "")
-
-    local function calibreGet(url)
-        local sink = {}
-        local requester = url:sub(1, 5) == "https" and https or http
-        socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
-        local ok, code = requester.request{ url = url, sink = ltn12.sink.table(sink) }
-        socketutil:reset_timeout()
-        if not ok or code ~= 200 then
-            return nil, string.format("HTTP %s", tostring(code))
-        end
-        local data, err = rapidjson.decode(table.concat(sink))
-        return data, err
+-- Shared HTTP GET for Calibre's JSON API. Returns decoded table + err string.
+function ZoteroSync:_calibreGet(url)
+    local sink = {}
+    local requester = url:sub(1, 5) == "https" and https or http
+    socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
+    local ok, code = requester.request{ url = url, sink = ltn12.sink.table(sink) }
+    socketutil:reset_timeout()
+    local body = table.concat(sink)
+    if not ok then
+        return nil, "connection failed: " .. tostring(code)
     end
+    if code ~= 200 then
+        return nil, string.format("HTTP %d — %s", code, body:sub(1, 120))
+    end
+    local data, err = rapidjson.decode(body)
+    if not data then
+        return nil, "JSON decode failed: " .. tostring(err) .. " body: " .. body:sub(1, 120)
+    end
+    return data, nil
+end
+
+-- Normalise the saved URL: strip trailing slash and /opds suffix.
+function ZoteroSync:_calibreBaseURL()
+    local settings = self.getSettings()
+    local url = settings.calibre_url
+    if not url or url == "" then return nil end
+    return url:gsub("/+$", ""):gsub("/opds$", "")
+end
+
+-- Probe the Calibre server and return a human-readable status string.
+function ZoteroSync:testCalibreConnection()
+    local base = self:_calibreBaseURL()
+    if not base then return "No Calibre URL configured." end
+
+    local data, err = self:_calibreGet(base .. "/ajax/search?query=&num=1")
+    if err then
+        return "Failed to reach Calibre at " .. base .. "\n\nError: " .. err
+    end
+    local total = data.total_num or "?"
+    return string.format("Connected to Calibre at %s\n%s book(s) in library.", base, tostring(total))
+end
+
+-- Query the Calibre content server for richer book metadata.
+-- Returns (meta_table, err_string). On success err is nil; on failure meta is nil.
+function ZoteroSync:_fetchCalibreMetadata(title)
+    local base = self:_calibreBaseURL()
+    if not base then return nil, "no Calibre URL" end
 
     -- Search by title
     local query = 'title:"' .. title .. '"'
-    local search, err = calibreGet(
-        base_url .. "/ajax/search?query=" .. socket.url.escape(query) .. "&num=5")
-    if not search or not search.ids or #search.ids == 0 then
-        logger.info("ZoteroSync: Calibre found no results for:", title, err)
-        return nil
+    local search, err = self:_calibreGet(
+        base .. "/ajax/search?query=" .. socket.url.escape(query) .. "&num=5")
+    if err then return nil, "search request failed: " .. err end
+    if not search.ids or #search.ids == 0 then
+        return nil, "no results for title: " .. title
     end
 
     -- Fetch metadata for the first result
     local book_id = tostring(search.ids[1])
-    local books, books_err = calibreGet(base_url .. "/ajax/books/" .. book_id)
-    if not books or not books[book_id] then
-        logger.warn("ZoteroSync: Calibre book fetch failed:", books_err)
-        return nil
+    local books, books_err = self:_calibreGet(base .. "/ajax/books/" .. book_id)
+    if books_err then return nil, "books request failed: " .. books_err end
+    if not books[book_id] then
+        return nil, "book id " .. book_id .. " missing from response"
     end
 
     local m = books[book_id]
     local ids = type(m.identifiers) == "table" and m.identifiers or {}
     return {
-        authors     = m.authors,   -- array of strings
+        authors     = m.authors,
         isbn        = ids.isbn or ids.ISBN,
         publisher   = m.publisher,
         date        = m.pubdate and m.pubdate:match("(%d%d%d%d)"),
         identifiers = ids,
-    }
+    }, nil
 end
 
 -- Search Zotero for a book item matching title. Returns key or nil.
@@ -272,7 +298,8 @@ function ZoteroSync:syncBook(book_data)
             zotero_key = found
         else
             -- Enrich metadata from Calibre before creating the item
-            local cal = self:_fetchCalibreMetadata(book_data.title)
+            local cal, cal_err = self:_fetchCalibreMetadata(book_data.title)
+            if cal_err then logger.info("ZoteroSync: Calibre lookup skipped:", cal_err) end
             if cal then
                 if cal.isbn      then book_data.isbn      = cal.isbn      end
                 if cal.publisher then book_data.publisher = cal.publisher end
@@ -400,10 +427,10 @@ function ZoteroSync:backfillMetadata()
             goto continue
         end
 
-        local cal = self:_fetchCalibreMetadata(data.title or "")
+        local cal, cal_err = self:_fetchCalibreMetadata(data.title or "")
         if not cal then
             n_no_match = n_no_match + 1
-            table.insert(errors, (data.title or zotero_key) .. ": no Calibre match")
+            table.insert(errors, (data.title or zotero_key) .. ": " .. (cal_err or "no match"))
             goto continue
         end
 

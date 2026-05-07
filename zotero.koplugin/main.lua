@@ -121,6 +121,14 @@ function ZoteroPlugin:addToMainMenu(menu_items)
                 end,
             },
             {
+                text     = _("Test Calibre connection"),
+                callback = function()
+                    local sync = self:_makeSync()
+                    local msg = sync:testCalibreConnection()
+                    UIManager:show(InfoMessage:new{ text = msg })
+                end,
+            },
+            {
                 text     = _("Settings"),
                 callback = function() self:showAPIKeyDialog() end,
             },
